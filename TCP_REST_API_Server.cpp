@@ -112,7 +112,7 @@ SOCKET createPassiveSocketREST() {
     return passiveSock;
 }
 
-bool processClient(shared_ptr<Client> client) {
+bool processRequest(shared_ptr<Client> client) {
     SOCKET activeSock = client->sock;
     int r;
 
@@ -240,7 +240,7 @@ void restThreadProc(int workerId) {
         // shared_ptr 은 boolean 이 필요한 곳에 쓰일 때면 null 인지 여부를 확인해준다.
         if (client) {
             SOCKET activeSock = client->sock;
-            bool successful = processClient(client);
+            bool successful = processRequest(client);
             if (successful == false) {
                 closesocket(activeSock);
 
