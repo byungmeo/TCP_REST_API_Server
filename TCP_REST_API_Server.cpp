@@ -201,14 +201,17 @@ bool processRequest(shared_ptr<Client> client) {
         cout << "[" << activeSock << "] Partial recv " << r << "bytes. " << client->offset << "/" << client->packetLen << endl;
     }
 
-    // TODO: 안전하게 모두 보낼 수 있도록 수정
     // 우선은 모든 request에 대해서 정해진 response를 보낸다.
-    r = send(client->sock, response_packet.c_str(), response_packet.length(), 0);
-    if (r == SOCKET_ERROR) {
-        std::cerr << "failed to send length: " << WSAGetLastError() << std::endl;
-        return false;
+    int offset = 0;
+    while (offset < response_packet.length()) {
+        r = send(client->sock, response_packet.c_str() + offset, response_packet.length() - offset, 0);
+        if (r == SOCKET_ERROR) {
+            std::cerr << "send failed with error " << WSAGetLastError() << std::endl;
+            return 1;
+        }
+        std::cout << "Sent " << r << " bytes" << std::endl;
+        offset += r;
     }
-    cout << "Sent " << r << " Bytes" << endl;
 
     return true;
 }
