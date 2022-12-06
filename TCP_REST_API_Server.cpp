@@ -5,7 +5,7 @@
 2. REST API Request를 처리하는 스레드를 여러개 만들고 Queue에 있는 작업들을 아래와 같이 처리한다.
 
 [Request 수신 순서] : Request Packet이 쪼개져서 올 수도 있으므로, HTTP 형식을 이용하여 Packet를 수신해야 한다.
-1. CRLF(\r\n)을 연속 2번 받을 때까지 offset을 이용하여 recv만 받는다
+1. CRLF(\r\n)을 연속 2번 받을 때까지 offset을 이용하여 "1바이트씩" recv만 받는다
     CRLF가 나올 때마다 헤더 종류를 체크한 후 다음 헤더 값들을 잘 저장한다. (저장한 후 buffer에 덮어씌워도 된다)
         Request 종류 (이건 무조건 첫 줄)
         Content-Type
@@ -30,9 +30,10 @@
 #include <iostream>
 #include <list>
 #include <map>
-#include "rapidjson/document.h"
 #include <mutex>
+#include "mylib.h"
 #include <queue>
+#include "rapidjson/document.h"
 #include <thread>
 
 #include <WinSock2.h>
@@ -95,7 +96,7 @@ SOCKET createPassiveSocketREST() {
     serverAddr.sin_port = htons(REST_SERVER_PORT);
     inet_pton(AF_INET, REST_SERVER_ADDRESS, &serverAddr.sin_addr.s_addr);
 
-    int r = bind(passiveSock, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    int r = ::bind(passiveSock, (sockaddr*)&serverAddr, sizeof(serverAddr));
     if (r == SOCKET_ERROR) {
         cerr << "bind failed with error " << WSAGetLastError() << endl;
         return 1;
@@ -113,9 +114,68 @@ SOCKET createPassiveSocketREST() {
 
 bool processClient(shared_ptr<Client> client) {
     SOCKET activeSock = client->sock;
+    int r;
 
-    // FIXME: 안전하게 모두 받을 수 있도록 수정
-    int r = recv(activeSock, client->packet, sizeof(client->packet), 0);
+    // Header 부분을 읽는다.
+    if (client->lenCompleted == false) {
+        while (!client->lenCompleted) {
+            r = recv(activeSock, client->packet + client->offset, 1, 0);
+            if (r == SOCKET_ERROR) {
+                std::cerr << "recv failed with error " << WSAGetLastError() << std::endl;
+                return false;
+            } else if (r == 0) {
+                // 메뉴얼을 보면 recv() 는 소켓이 닫힌 경우 0 을 반환함을 알 수 있다.
+                // 따라서 r == 0 인 경우도 loop 을 탈출하게 해야된다.
+                return false;
+            }
+            client->offset++;
+
+            if (client->offset >= 2 && client->packet[client->offset - 2] == '\r' && client->packet[client->offset - 1] == '\n') {
+                if (client->offset == 2 && client->packet[0] == '\r' && client->packet[1] == '\n') {
+                    // Header 부분을 모두 읽은 경우
+                    client->lenCompleted = true;
+                } else {
+                    // Header 속성 하나를 모두 읽은 경우
+                    client->packet[client->offset-1] = '\0'; // \r과 \n를 제외하고 문자열의 끝임을 알린다.
+                    string field = client->packet;
+                    vector<string> result = split(field, ':');
+                    if (result.size() >= 2) {
+                        string key = result[0];
+                        string value = "";
+                        for (int i = 1; i < result.size(); ++i) {
+                            value += result[i];
+                        }
+                        trim(value); // 양옆 공백을 제거
+                        cout << "KEY : " << key << endl;
+                        cout << "VAL : " << value << endl << endl;
+
+                        if (key.compare("Content-Length") == 0) {
+                            client->packetLen = atoi(value.c_str());
+                        }
+                    } else if (result.size() == 1) {
+                        // 맨 첫줄 (request type과 HTTP 버전)
+                        // request type만 추출해낸다.
+                        vector<string> result = split(field, ' ');
+                        string type = result[0];
+                        cout << "Request Type : " << type << endl;
+                    }
+
+                    // 버퍼 초기화
+                    fill(client->packet, client->packet + client->offset, 0xcccccccc);
+                }
+                client->offset = 0;
+            }
+        }
+    }
+
+    // 여기까지 도달했다는 것은 packetLen 을 완성한 경우다. (== lenCompleted 가 true)
+    // packetLen 만큼 데이터를 읽으면서 완성한다.
+    if (client->lenCompleted == false) {
+        return true;
+    }
+
+    // Body 부분을 읽는다.
+    r = recv(client->sock, client->packet + client->offset, client->packetLen - client->offset, 0);
     if (r == SOCKET_ERROR) {
         std::cerr << "recv failed with error " << WSAGetLastError() << std::endl;
         return false;
@@ -124,8 +184,24 @@ bool processClient(shared_ptr<Client> client) {
         // 따라서 r == 0 인 경우도 loop 을 탈출하게 해야된다.
         return false;
     }
+    client->offset += r;
 
-    // FIXME: 안전하게 모두 보낼 수 있도록 수정
+    // 완성한 경우와 partial recv 인 경우를 구분해서 로그를 찍는다.
+    if (client->offset == client->packetLen) {
+        cout << "[" << activeSock << "] Received " << client->packetLen << " bytes" << endl;
+        
+        client->packet[client->offset] = '\0'; // 버퍼의 뒤 쓰레기값부분은 자르도록 널 문자를 추가
+        cout << client->packet << endl;
+
+        // 다음 패킷을 위해 패킷 관련 정보를 초기화한다.
+        client->lenCompleted = false;
+        client->offset = 0;
+        client->packetLen = 0;
+    } else {
+        cout << "[" << activeSock << "] Partial recv " << r << "bytes. " << client->offset << "/" << client->packetLen << endl;
+    }
+
+    // TODO: 안전하게 모두 보낼 수 있도록 수정
     // 우선은 모든 request에 대해서 정해진 response를 보낸다.
     r = send(client->sock, response_packet.c_str(), response_packet.length(), 0);
     if (r == SOCKET_ERROR) {

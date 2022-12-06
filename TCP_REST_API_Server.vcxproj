@@ -127,7 +127,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="mylib.cpp" />
     <ClCompile Include="TCP_REST_API_Server.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="mylib.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
