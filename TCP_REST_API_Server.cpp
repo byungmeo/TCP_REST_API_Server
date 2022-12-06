@@ -1,18 +1,21 @@
-﻿/* 목표
-*
+﻿/* 
+REST API 서버 구축을 위해 불특정 다수의 HTTP Request들을 패킷누락 없이 안정적으로 수신하고
+적절히 Parsing 할 수 있는 기반을 마련하는 것을 목표로 한다.
+
 [소켓 관련 처리] : 동시 다발적인 요청을 처리하기 위해서는 Queue가 필요하다.
 1. FD_SET을 통해 HTTP Client들을 Map에 넣고 Queue를 통해 작업들을 생성한다.
 2. REST API Request를 처리하는 스레드를 여러개 만들고 Queue에 있는 작업들을 아래와 같이 처리한다.
 
-[Request 수신 순서] : Request Packet이 쪼개져서 올 수도 있으므로, HTTP 형식을 이용하여 Packet를 수신해야 한다.
-1. CRLF(\r\n)을 연속 2번 받을 때까지 offset을 이용하여 "1바이트씩" recv만 받는다
-    CRLF가 나올 때마다 헤더 종류를 체크한 후 다음 헤더 값들을 잘 저장한다. (저장한 후 buffer에 덮어씌워도 된다)
+[Request 수신 순서] : Request Packet이 쪼개져서 올 수도 있다. 그리고 Body 부분 Packet은 HTTP 헤더 정보를 기반으로 필요한 만큼 수신해야 한다.
+1. CRLF(\r\n)을 연속 2번 받을 때까지 offset을 이용하여 "1바이트씩" recv 한다.
+    CRLF가 나올 때마다 헤더 종류를 체크한 후 다음 헤더 값들을 잘 저장한다. (저장한 후 buffer는 다시 초기화 해도 된다.)
         Request 종류 (이건 무조건 첫 줄)
         Content-Type
         Content-Length
-3. Content-Length만큼 offset을 이용하여 recv만 받는다
+        (목적에 따라 추가적으로 저장할 수 있다.)
+3. Content-Length만큼 offset을 이용하여 recv 한다.
 
-[Body 파싱 후 처리 순서]
+[Body 파싱 후 처리 순서 -> JSON 기준]
 1. 만약 Content-Type이 application/json이라면, Body를 JSON으로 Parsing한다.
 2. command와 userName을 알아내고 나머지 인수들을 받는다. (login command 없이 로그인 과정을 거치도록 한다)
 3. command별로 기존과 동일하게 처리한다.
@@ -33,13 +36,11 @@
 #include <mutex>
 #include "mylib.h"
 #include <queue>
-#include "rapidjson/document.h"
 #include <thread>
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
-using namespace rapidjson;
 using namespace std;
 
 // ws2_32.lib 를 링크한다.
