@@ -154,11 +154,23 @@ bool processRequest(shared_ptr<Client> client) {
                             client->packetLen = atoi(value.c_str());
                         }
                     } else if (result.size() == 1) {
-                        // 맨 첫줄 (request type과 HTTP 버전)
-                        // request type만 추출해낸다.
+                        // 맨 첫줄
+                        // [0]: 요청타입 / [1]: 파라메터 / [2]: 프로토콜버전
                         vector<string> result = split(field, ' ');
                         string type = result[0];
+                        string param = result[1];
+                        string protocol = result[2];
                         cout << "Request Type : " << type << endl;
+                        cout << "Params : " << param << endl;
+                        cout << "Protocol : " << protocol << endl;
+
+                        // GET 요청의 경우 패킷 길이를 0으로 지정한다. (Content-Length 헤더도 없다)
+                        // 더 이상 헤더 정보는 필요 없지만, 모두 다 받지 않으면
+                        // REST API Client에서 다음 요청을 보내오면 이전 요청의 헤더를 받아버리기 때문에
+                        // 헤더를 모두 받은 후 lenCompleted를 true로 바꿔야 한다.
+                        if (type.compare("GET") == 0) {
+                            client->packetLen = 0;
+                        }
                     }
 
                     // 버퍼 초기화
@@ -175,22 +187,25 @@ bool processRequest(shared_ptr<Client> client) {
         return true;
     }
 
-    // Body 부분을 읽는다.
-    r = recv(client->sock, client->packet + client->offset, client->packetLen - client->offset, 0);
-    if (r == SOCKET_ERROR) {
-        std::cerr << "recv failed with error " << WSAGetLastError() << std::endl;
-        return false;
-    } else if (r == 0) {
-        // 메뉴얼을 보면 recv() 는 소켓이 닫힌 경우 0 을 반환함을 알 수 있다.
-        // 따라서 r == 0 인 경우도 loop 을 탈출하게 해야된다.
-        return false;
+    // 받을게 있다면 받는다.
+    if (client->packetLen != 0) {
+        // Body 부분을 읽는다.
+        r = recv(client->sock, client->packet + client->offset, client->packetLen - client->offset, 0);
+        if (r == SOCKET_ERROR) {
+            std::cerr << "recv failed with error " << WSAGetLastError() << std::endl;
+            return false;
+        } else if (r == 0) {
+            // 메뉴얼을 보면 recv() 는 소켓이 닫힌 경우 0 을 반환함을 알 수 있다.
+            // 따라서 r == 0 인 경우도 loop 을 탈출하게 해야된다.
+            return false;
+        }
+        client->offset += r;
     }
-    client->offset += r;
 
     // 완성한 경우와 partial recv 인 경우를 구분해서 로그를 찍는다.
     if (client->offset == client->packetLen) {
         cout << "[" << activeSock << "] Received " << client->packetLen << " bytes" << endl;
-        
+
         client->packet[client->offset] = '\0'; // 버퍼의 뒤 쓰레기값부분은 자르도록 널 문자를 추가
         cout << client->packet << endl;
 
@@ -198,20 +213,20 @@ bool processRequest(shared_ptr<Client> client) {
         client->lenCompleted = false;
         client->offset = 0;
         client->packetLen = 0;
+
+        // 우선은 모든 request에 대해서 정해진 response를 보낸다.
+        int offset = 0;
+        while (offset < response_packet.length()) {
+            r = send(client->sock, response_packet.c_str() + offset, response_packet.length() - offset, 0);
+            if (r == SOCKET_ERROR) {
+                std::cerr << "send failed with error " << WSAGetLastError() << std::endl;
+                return 1;
+            }
+            std::cout << "Sent " << r << " bytes" << std::endl;
+            offset += r;
+        }
     } else {
         cout << "[" << activeSock << "] Partial recv " << r << "bytes. " << client->offset << "/" << client->packetLen << endl;
-    }
-
-    // 우선은 모든 request에 대해서 정해진 response를 보낸다.
-    int offset = 0;
-    while (offset < response_packet.length()) {
-        r = send(client->sock, response_packet.c_str() + offset, response_packet.length() - offset, 0);
-        if (r == SOCKET_ERROR) {
-            std::cerr << "send failed with error " << WSAGetLastError() << std::endl;
-            return 1;
-        }
-        std::cout << "Sent " << r << " bytes" << std::endl;
-        offset += r;
     }
 
     return true;
