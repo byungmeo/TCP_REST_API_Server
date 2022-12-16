@@ -52,7 +52,7 @@ static const char* REST_SERVER_ADDRESS = "127.0.0.1";
 static const int BUFFER_SIZE = 8192;
 
 // 고정된 response 패킷 (Content-Length도 고정)
-static const string response_packet = "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: text/plain\r\n\r\nResponse";
+// static const string response_packet = "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: text/plain\r\n\r\nResponse";
 
 class Client {
 public:
@@ -111,6 +111,12 @@ SOCKET createPassiveSocketREST() {
     }
 
     return passiveSock;
+}
+
+string convertToJson() {
+    char jsonData[BUFFER_SIZE];
+    sprintf_s(jsonData, sizeof(jsonData), "{\"tag\": \"position\", \"x\": %d, \"y\": %d}", 10, 10);
+    return jsonData;
 }
 
 bool processRequest(shared_ptr<Client> client) {
@@ -214,10 +220,16 @@ bool processRequest(shared_ptr<Client> client) {
         client->offset = 0;
         client->packetLen = 0;
 
-        // 우선은 모든 request에 대해서 정해진 response를 보낸다.
+        // Body 부분에 JSON 메시지를 담고 헤더의 Content-Length를 지정하여 Response 메시지를 만든다.
+        string json = convertToJson();
+        char buffer[BUFFER_SIZE];
+        sprintf_s(buffer, sizeof(buffer), "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: application/json\r\n\r\n%s", json.size(), json.c_str());
+        string response = buffer;
+
+        // Response를 전송한다.
         int offset = 0;
-        while (offset < response_packet.length()) {
-            r = send(client->sock, response_packet.c_str() + offset, response_packet.length() - offset, 0);
+        while (offset < response.length()) {
+            r = send(client->sock, response.c_str() + offset, response.length() - offset, 0);
             if (r == SOCKET_ERROR) {
                 std::cerr << "send failed with error " << WSAGetLastError() << std::endl;
                 return 1;
